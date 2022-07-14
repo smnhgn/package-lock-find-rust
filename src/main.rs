@@ -4,6 +4,12 @@ use models::{Dependency, PackageLock};
 use serde_json::Error;
 use std::{collections::HashMap, convert::identity, env, fs, path::Path};
 
+#[derive(Debug, Clone)]
+struct DependencyRecord {
+    name: String,
+    dependency: Dependency,
+}
+
 fn read_package_lock(json_path: &str) -> Result<PackageLock, Error> {
     let json_file_path = Path::new(json_path).join("package-lock.json");
     let json_contents = fs::read_to_string(json_file_path).expect("reading package-lock.json");
@@ -14,22 +20,26 @@ fn read_package_lock(json_path: &str) -> Result<PackageLock, Error> {
 fn find_dependency_by_name(
     dep_map: &HashMap<String, Dependency>,
     dep_name: &String,
-    dep_parents: &mut Vec<String>,
-) -> Vec<Option<(Vec<String>, Dependency)>> {
+    dep_history: &mut Vec<DependencyRecord>,
+) -> Vec<Option<(Vec<DependencyRecord>, Dependency)>> {
     let dependency_list = Vec::from_iter(dep_map.into_iter());
     let dependency_result = dependency_list
         .into_iter()
-        .flat_map(|(name, dep)| {
-            let mut new_dep_parents = Vec::from(dep_parents.clone());
+        .flat_map(|(name, dependency)| {
+            let mut current_dep_history = Vec::from(dep_history.clone());
+            let current_dep = DependencyRecord {
+                name: name.to_string(),
+                dependency: dependency.to_owned(),
+            };
 
-            new_dep_parents.push(name.to_owned());
+            current_dep_history.push(current_dep);
 
             return match name == dep_name {
-                true => vec![Some((new_dep_parents, dep.to_owned()))],
+                true => vec![Some((current_dep_history, dependency.to_owned()))],
                 false => {
-                    return match dep.dependencies.to_owned() {
+                    return match dependency.dependencies.to_owned() {
                         Some(dep_map) => {
-                            find_dependency_by_name(&dep_map, &dep_name, &mut new_dep_parents)
+                            find_dependency_by_name(&dep_map, &dep_name, &mut current_dep_history)
                         }
                         None => vec![None],
                     };
@@ -56,12 +66,25 @@ fn main() {
     };
 
     let dep_map = package_lock.dependencies.expect("read dependencies");
-    let mut dep_parents: Vec<String> = Vec::new();
-    let dep_result: Vec<(Vec<String>, Dependency)> =
-        find_dependency_by_name(&dep_map, &dep_name, &mut dep_parents)
+    let mut dep_history: Vec<DependencyRecord> = Vec::new();
+    let dep_result: Vec<(Vec<DependencyRecord>, Dependency)> =
+        find_dependency_by_name(&dep_map, &dep_name, &mut dep_history)
             .into_iter()
             .filter_map(identity)
             .collect();
 
-    println!("{:#?}", dep_result);
+    dep_result.into_iter().for_each(|(parents, dependency)| {
+        println!(
+            "{}",
+            parents
+                .into_iter()
+                .map(|DependencyRecord { name, dependency }| vec![
+                    name,
+                    dependency.version.unwrap_or("unknown version".to_owned())
+                ]
+                .join("@"))
+                .collect::<Vec<String>>()
+                .join(" => ")
+        )
+    })
 }

@@ -27,7 +27,7 @@ pub struct Package {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Dependency {
-    version: Option<String>,
+    pub version: Option<String>,
     integrity: Option<String>,
     resolved: Option<String>,
     dev: Option<bool>,
