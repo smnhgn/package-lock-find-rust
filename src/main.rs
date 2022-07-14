@@ -2,7 +2,7 @@ mod models;
 
 use models::{Dependency, PackageLock};
 use serde_json::Error;
-use std::{collections::HashMap, env, fs, path::Path};
+use std::{collections::HashMap, convert::identity, env, fs, path::Path};
 
 fn read_package_lock(json_path: &str) -> Result<PackageLock, Error> {
     let json_file_path = Path::new(json_path).join("package-lock.json");
@@ -12,28 +12,38 @@ fn read_package_lock(json_path: &str) -> Result<PackageLock, Error> {
 }
 
 fn find_dependency_by_name(
-    dependencies: &HashMap<String, Dependency>,
-    dependency_name: &str,
-) -> Option<Dependency> {
-    let empty_hash_map: HashMap<String, Dependency> = HashMap::new();
-    let nested_dependencies_list: Vec<&HashMap<String, Dependency>> = dependencies
-        .values()
-        .map(|dependency| dependency.dependencies.as_ref().unwrap_or(&empty_hash_map))
+    dep_map: &HashMap<String, Dependency>,
+    dep_name: &String,
+    dep_parents: &mut Vec<String>,
+) -> Vec<Option<(Vec<String>, Dependency)>> {
+    let dependency_list = Vec::from_iter(dep_map.into_iter());
+    let dependency_result = dependency_list
+        .into_iter()
+        .flat_map(|(name, dep)| {
+            let mut new_dep_parents = Vec::from(dep_parents.clone());
+
+            new_dep_parents.push(name.to_owned());
+
+            return match name == dep_name {
+                true => vec![Some((new_dep_parents, dep.to_owned()))],
+                false => {
+                    return match dep.dependencies.to_owned() {
+                        Some(dep_map) => {
+                            find_dependency_by_name(&dep_map, &dep_name, &mut new_dep_parents)
+                        }
+                        None => vec![None],
+                    };
+                }
+            };
+        })
         .collect();
 
-    let dependency = match dependencies.get(dependency_name) {
-        Some(dependency) => Some(dependency).cloned(),
-        None => nested_dependencies_list
-            .into_iter()
-            .find_map(|dependencies| find_dependency_by_name(&dependencies, dependency_name)),
-    };
-
-    dependency
+    dependency_result
 }
 
 #[allow(unused_variables)]
 fn main() {
-    let dependency_name = env::args().nth(1).expect("no package given");
+    let dep_name = env::args().nth(1).expect("no package given");
 
     let package_lock_path = match env::args().nth(2) {
         Some(p) => p,
@@ -45,10 +55,13 @@ fn main() {
         Err(err) => panic!("invalid json: {}", err.to_string()),
     };
 
-    let dependency = match package_lock.dependencies {
-        Some(dependencies) => find_dependency_by_name(&dependencies, &dependency_name),
-        None => panic!("couldn't find dependency: {}", dependency_name),
-    };
+    let dep_map = package_lock.dependencies.expect("read dependencies");
+    let mut dep_parents: Vec<String> = Vec::new();
+    let dep_result: Vec<(Vec<String>, Dependency)> =
+        find_dependency_by_name(&dep_map, &dep_name, &mut dep_parents)
+            .into_iter()
+            .filter_map(identity)
+            .collect();
 
-    println!("{:#?}", dependency)
+    println!("{:#?}", dep_result);
 }
